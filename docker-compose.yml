@@ -1,0 +1,16 @@
+version: "3.9"
+services:
+  fastapi-app:
+    build:
+      context: .
+    ports:
+      - "5000:5000"
+    environment:
+      - ENV_FILE=.env
+    networks:
+      - nano
+
+
+networks:
+  nano:
+    driver: bridge
