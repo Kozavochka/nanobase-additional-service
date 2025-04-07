@@ -1,10 +1,11 @@
 import os
+import pickle
+import pathlib
+import pandas as pd
+import numpy as np
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from dotenv import load_dotenv
-import joblib
-import numpy as np
-from pydantic import BaseModel
 
 # Загрузить переменные из .env
 load_dotenv()
@@ -18,8 +19,46 @@ users_db = {
     os.getenv("USER_USERNAME"): os.getenv("USER_PASSWORD")
 }
 
-# Загрузка заранее обученной модели
-model = joblib.load("iris_model.joblib")
+# Класс ModelWrapper
+class ModelWrapper:
+    def __init__(self):
+        self.model = None
+        self.scaler = None
+        self.name = None
+
+    def set_models_data(self, model_reference, scaler_reference):
+        self.model = model_reference
+        self.scaler = scaler_reference
+
+    def load(self, path):
+        with open(path, 'rb') as handle:
+            model_parts = pickle.load(handle)
+            self.model = model_parts["model"]
+            self.scaler = model_parts["scaler"]
+            self.name = pathlib.Path(path).stem
+
+    def predict(self, samples):
+        preds = self.model.predict(samples)
+        return preds
+
+    def scaled_predict(self, samples):
+        preds = self.predict(self.scaler.transform(samples))
+        return preds
+
+    def scaled_tranform_predict(self, samples: pd.DataFrame):
+        new_samples = pd.DataFrame({
+            "x_Co": samples["x_Co"].values,
+            "x_Fe": samples["x_Fe"].values,
+            "log_Po2": np.log10(samples["Po2"].values),
+            "1000/T": 1000 / (samples["T"].values + 273),
+            "1000/T_sint": 1000 / samples["T_sint"].values
+        })
+        return self.scaled_predict(new_samples)
+
+
+# Загружаем модель
+model_wrapper = ModelWrapper()
+model_wrapper.load("LNCF_ETR_model.pickle")
 
 # Проверка авторизации
 def authenticate(credentials: HTTPBasicCredentials):
@@ -34,26 +73,23 @@ def authenticate(credentials: HTTPBasicCredentials):
         )
     return True
 
-# Определение структуры входных данных
-class InputData(BaseModel):
-    features: list[float]
-
 @app.get("/health")
-def get_status():
+def health():
     return {"message": "OK"}
 
 @app.post("/predict")
-def predict(input_data: InputData, credentials: HTTPBasicCredentials = Depends(security)):
+def predict(data: dict, credentials: HTTPBasicCredentials = Depends(security)):
     # Проверяем авторизацию
     authenticate(credentials)
 
-    # Преобразование входных данных в массив numpy
-    features = np.array(input_data.features).reshape(1, -1)
+    # Преобразование входных данных в DataFrame
+    samples = pd.DataFrame(data)
 
-    # Проверяем соответствие числа признаков
-    if features.shape[1] != 4:  # Убедитесь, что размер соответствует модели (4 признака для Iris)
-        raise HTTPException(status_code=400, detail="Invalid input size. Expected 4 features.")
+    # Проверка входных данных
+    required_columns = {"x_Co", "x_Fe", "Po2", "T", "T_sint"}
+    if not required_columns.issubset(samples.columns):
+        raise HTTPException(status_code=400, detail=f"Missing required columns: {required_columns - set(samples.columns)}")
 
     # Получение предсказания
-    prediction = model.predict(features)
-    return {"predicted_class": int(prediction[0])}
+    predictions = model_wrapper.scaled_tranform_predict(samples)
+    return {"log(sigma)": predictions.tolist(), "sigma": (10 ** predictions).tolist()}
