@@ -6,6 +6,7 @@ import numpy as np
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from dotenv import load_dotenv
+from pg_connector import get_all_aloys_json, get_all_fuel_cells_json
 
 # Загрузить переменные из .env
 load_dotenv()
@@ -93,3 +94,13 @@ def predict(data: dict, credentials: HTTPBasicCredentials = Depends(security)):
     # Получение предсказания
     predictions = model_wrapper.scaled_tranform_predict(samples)
     return {"log(sigma)": predictions.tolist(), "sigma": (10 ** predictions).tolist()}
+
+@app.get("/alloys")
+def get_alloys(credentials: HTTPBasicCredentials = Depends(security)):
+    authenticate(credentials)
+    return get_all_aloys_json()
+
+@app.get("/fuel-cells")
+def get_alloys(credentials: HTTPBasicCredentials = Depends(security)):
+    authenticate(credentials)
+    return get_all_fuel_cells_json()
