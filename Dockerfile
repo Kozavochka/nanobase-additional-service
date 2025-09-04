@@ -15,4 +15,4 @@ COPY . .
 COPY LNCF_ETR_model.pickle LNCF_ETR_model.pickle
 
 # Запуск API
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5000"]

@@ -7,6 +7,9 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from dotenv import load_dotenv
 from pg_connector import get_all_aloys_json, get_all_fuel_cells_json
+from rabbit_client import send_message
+import json
+from datetime import datetime
 
 # Загрузить переменные из .env
 load_dotenv()
@@ -61,6 +64,11 @@ class ModelWrapper:
 model_wrapper = ModelWrapper()
 model_wrapper.load("LNCF_ETR_model.pickle")
 
+def chunked(iterable, size):
+    """Разбивает список на куски фиксированного размера."""
+    for i in range(0, len(iterable), size):
+        yield iterable[i:i + size]
+
 # Проверка авторизации
 def authenticate(credentials: HTTPBasicCredentials):
     username = credentials.username
@@ -73,6 +81,11 @@ def authenticate(credentials: HTTPBasicCredentials):
             headers={"WWW-Authenticate": "Basic"},
         )
     return True
+
+def default_serializer(obj):
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Type {type(obj)} not serializable")
 
 @app.get("/health")
 def health():
@@ -104,3 +117,43 @@ def get_alloys(credentials: HTTPBasicCredentials = Depends(security)):
 def get_alloys(credentials: HTTPBasicCredentials = Depends(security)):
     authenticate(credentials)
     return get_all_fuel_cells_json()
+
+@app.post('/import-alloys')
+def push_alloys(credentials: HTTPBasicCredentials = Depends(security)):
+    authenticate(credentials)
+    all_alloys = get_all_aloys_json()
+
+    for chunk in chunked(all_alloys, 10):
+        message = json.dumps(chunk, ensure_ascii=False, indent=2, default=default_serializer)
+        send_message('alloys', message)
+
+    return {"message": "OK"}
+
+
+@app.post('/import-fuel-cells')
+def push_alloys(credentials: HTTPBasicCredentials = Depends(security)):
+    authenticate(credentials)
+    data = get_all_fuel_cells_json()
+
+    for chunk in chunked(data, 10):
+        message = json.dumps(chunk, ensure_ascii=False, indent=2, default=default_serializer)
+        send_message('fuel_cells', message)
+
+    return {"message": "OK"}
+
+@app.post('/import-all')
+def push_alloys(credentials: HTTPBasicCredentials = Depends(security)):
+    authenticate(credentials)
+    data = get_all_fuel_cells_json()
+
+    for chunk in chunked(data, 10):
+        message = json.dumps(chunk, ensure_ascii=False, indent=2, default=default_serializer)
+        send_message('fuel_cells', message)
+
+    data = get_all_aloys_json()
+
+    for chunk in chunked(data, 10):
+        message = json.dumps(chunk, ensure_ascii=False, indent=2, default=default_serializer)
+        send_message('alloys', message)
+
+    return {"message": "OK"}

@@ -34,6 +34,7 @@ def get_all_aloys_json():
     rows = cur.fetchall()
 
     alloys = [dict(zip(cols, row)) for row in rows]
+
     cur.close()
     close_connection(conn)
 

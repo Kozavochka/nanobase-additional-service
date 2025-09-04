@@ -4,7 +4,7 @@ services:
     build:
       context: .
     ports:
-      - "8000:8000"
+      - "5000:5000"
     environment:
       - ENV_FILE=.env
     networks:
@@ -14,3 +14,4 @@ services:
 networks:
   nano:
     driver: bridge
+    external: true

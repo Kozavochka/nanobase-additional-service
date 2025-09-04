@@ -7,3 +7,4 @@ numpy
 pydantic
 pandas
 psycopg2-binary
+pika
