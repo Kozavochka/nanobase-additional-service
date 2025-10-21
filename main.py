@@ -6,7 +6,7 @@ import numpy as np
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from dotenv import load_dotenv
-from pg_connector import get_all_aloys_json, get_all_fuel_cells_json
+from pg_connector import get_all_aloys_json, get_all_fuel_cells_json, get_all_composites_json
 from rabbit_client import send_message
 import json
 from datetime import datetime
@@ -155,5 +155,11 @@ def push_alloys(credentials: HTTPBasicCredentials = Depends(security)):
     for chunk in chunked(data, 10):
         message = json.dumps(chunk, ensure_ascii=False, indent=2, default=default_serializer)
         send_message('alloys', message)
+
+    data = get_all_composites_json()
+
+    for chunk in chunked(data, 10):
+        message = json.dumps(chunk, ensure_ascii=False, indent=2, default=default_serializer)
+        send_message('composite', message)
 
     return {"message": "OK"}

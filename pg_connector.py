@@ -54,3 +54,17 @@ def get_all_fuel_cells_json():
     close_connection(conn)
 
     return fuel_cells
+
+def get_all_composites_json():
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM public.composites;")
+    
+    cols = [desc[0] for desc in cur.description]
+    rows = cur.fetchall()
+
+    fuel_cells = [dict(zip(cols, row)) for row in rows]
+    cur.close()
+    close_connection(conn)
+
+    return fuel_cells
