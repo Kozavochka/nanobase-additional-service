@@ -3,14 +3,18 @@ import pickle
 import pathlib
 import pandas as pd
 import numpy as np
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Body
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from dotenv import load_dotenv
 from pg_connector import get_all_aloys_json, get_all_fuel_cells_json, get_all_composites_json
 from rabbit_client import send_message
 import json
 from datetime import datetime
-
+from calibration_service import ROI, AxisConfig, PlotCalibrator
+from s3_service import S3Service
+from calibration_service import ROI, AxisConfig, PlotCalibrator
+from chart_processor import ChartProcessorService
+from typing import Dict, Any
 # Загрузить переменные из .env
 load_dotenv()
 
@@ -163,3 +167,75 @@ def push_alloys(credentials: HTTPBasicCredentials = Depends(security)):
         send_message('composite', message)
 
     return {"message": "OK"}
+
+
+def safe_ticks(vmin, vmax, step):
+    if not step:
+        return None
+    try:
+        step = float(step)
+    except Exception:
+        return None
+    if step == 0:
+        return None
+    # проверяем направление
+    if (vmax > vmin and step < 0) or (vmax < vmin and step > 0):
+        step = -step
+    # np.arange работает с float
+    ticks = list(np.arange(vmin, vmax + step, step))
+    return ticks
+
+@app.post("/process_chart")
+def process_chart(markup: dict = Body(...), calibration: dict = Body(...), image_path: str = Body(...)):
+    # 1. Собираем ROI и оси
+    roi = ROI(
+        x_left=min(calibration["x1_pix"], calibration["x2_pix"]),
+        x_right=max(calibration["x1_pix"], calibration["x2_pix"]),
+        y_top=min(calibration["y1_pix_axis"], calibration["y2_pix_axis"]),
+        y_bottom=max(calibration["y1_pix_axis"], calibration["y2_pix_axis"])
+    )
+    xaxis = AxisConfig(vmin=calibration["x1_val"], vmax=calibration["x2_val"])
+    yaxis = AxisConfig(vmin=calibration["y1_val"], vmax=calibration["y2_val"])
+    calibrator = PlotCalibrator(roi, xaxis, yaxis)
+
+    # 2. Инициализируем сервисы
+    s3 = S3Service()
+    processor = ChartProcessorService(s3, calibrator)
+
+    # 3. Запускаем обработку
+    result = processor.process(image_path=image_path, markup=markup, calibration=calibration)
+
+    return result
+
+
+@app.post("/db-scan-process-chart")
+def db_scan_process_chart(
+    markup: Dict[str, Any] = Body(...),
+    calibration: Dict[str, Any] = Body(...),
+    image_path: str = Body(...),
+    eps_setting: float = Body(15.0)  # 8 (близко) или 15 (средне)
+):
+    # 1) Собираем ROI и оси (как в старом методе)
+    roi = ROI(
+        x_left=min(calibration["x1_pix"], calibration["x2_pix"]),
+        x_right=max(calibration["x1_pix"], calibration["x2_pix"]),
+        y_top=min(calibration["y1_pix_axis"], calibration["y2_pix_axis"]),
+        y_bottom=max(calibration["y1_pix_axis"], calibration["y2_pix_axis"])
+    )
+    xaxis = AxisConfig(vmin=calibration["x1_val"], vmax=calibration["x2_val"])
+    yaxis = AxisConfig(vmin=calibration["y1_val"], vmax=calibration["y2_val"])
+    calibrator = PlotCalibrator(roi, xaxis, yaxis)
+
+    # 2) Инициализируем сервисы
+    s3 = S3Service()
+    processor = ChartProcessorService(s3, calibrator)
+
+    # 3) Запуск новой логики: DBSCAN по цвету
+    result = processor.process_dbscan(
+        image_path=image_path,
+        markup=markup,
+        calibration=calibration,
+        eps_setting=float(eps_setting)  # 8.0 или 15.0
+    )
+
+    return result

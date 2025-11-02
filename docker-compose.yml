@@ -7,6 +7,8 @@ services:
       - "5000:5000"
     environment:
       - ENV_FILE=.env
+    env_file:
+      - .env  
     networks:
       - nano
 
