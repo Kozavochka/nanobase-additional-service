@@ -8,3 +8,11 @@ pydantic
 pandas
 psycopg2-binary
 pika
+boto3
+openpyxl
+Pillow
+scikit-image
+scipy
+matplotlib
+opencv-python
+python-multipart
