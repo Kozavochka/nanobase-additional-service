@@ -3,18 +3,18 @@ import pickle
 import pathlib
 import pandas as pd
 import numpy as np
-from fastapi import FastAPI, Depends, HTTPException, status, Body
+from fastapi import FastAPI, Depends, HTTPException, status, Body, Request, UploadFile, File
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from dotenv import load_dotenv
 from pg_connector import get_all_aloys_json, get_all_fuel_cells_json, get_all_composites_json
 from rabbit_client import send_message
 import json
 from datetime import datetime
-from calibration_service import ROI, AxisConfig, PlotCalibrator
 from s3_service import S3Service
 from calibration_service import ROI, AxisConfig, PlotCalibrator
 from chart_processor import ChartProcessorService
 from typing import Dict, Any
+from colorref_service import ColorRefService
 # Загрузить переменные из .env
 load_dotenv()
 
@@ -238,4 +238,26 @@ def db_scan_process_chart(
         eps_setting=float(eps_setting)  # 8.0 или 15.0
     )
 
+    return result
+
+
+
+@app.post("/colorref-process-chart")
+# async def colorref_process_chart(payload: dict = Body(...)):
+#     print(payload)
+#     return payload
+async def colorref_process_chart(
+    markup: Dict[str, Any] = Body(...),
+    calibration: Dict[str, Any] = Body(...),
+    image_path: str = Body(...),
+    refs: list[Dict[Any, Any]] = Body(...),   # список {name:..., rgb:...}
+):
+    s3 = S3Service()
+    service = ColorRefService(s3)
+    result = await service.process(
+        markup=markup,
+        calibration=calibration,
+        image_path=image_path,
+        refs=refs,
+    )
     return result
