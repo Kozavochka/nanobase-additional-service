@@ -13,8 +13,10 @@ from datetime import datetime
 from s3_service import S3Service
 from calibration_service import ROI, AxisConfig, PlotCalibrator
 from chart_processor import ChartProcessorService
-from typing import Dict, Any
+from typing import Dict, Any, List
 from colorref_service import ColorRefService
+from property_relation_service import PropertyRelation
+from pydantic import BaseModel
 # Загрузить переменные из .env
 load_dotenv()
 
@@ -185,6 +187,7 @@ def safe_ticks(vmin, vmax, step):
     ticks = list(np.arange(vmin, vmax + step, step))
     return ticks
 
+# Методы графической детекции
 @app.post("/process_chart")
 def process_chart(markup: dict = Body(...), calibration: dict = Body(...), image_path: str = Body(...)):
     # 1. Собираем ROI и оси
@@ -261,3 +264,32 @@ async def colorref_process_chart(
         refs=refs,
     )
     return result
+
+class RelationInput(BaseModel):
+    T_A: List[float]
+    A: List[float]
+    T_B: List[float]
+    B: List[float]
+    method: str = "cubic"  # по умолчанию кубический сплайн
+
+
+@app.post("/relation")
+def get_relation(data: RelationInput):
+    relation = PropertyRelation()
+
+    # выбираем метод интерполяции
+    if data.method == "cubic":
+        relation.fit_cubic(data.T_A, data.A, data.T_B, data.B)
+    elif data.method == "linear":
+        relation.fit_linear(data.T_A, data.A, data.T_B, data.B)
+    else:
+        return {"error": f"Метод {data.method} не поддерживается"}
+
+    # получаем таблицу A(B)
+    table = relation.get_table()
+    if table is None:
+        return {"error": "Нет пересечения температур"}
+
+    # преобразуем таблицу в список словарей
+    result = table.to_dict(orient="records")
+    return {"relation": result}
