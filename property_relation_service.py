@@ -18,6 +18,14 @@ class PropertyRelation:
         T_A, A = np.array(T_A), np.array(A)
         T_B, B = np.array(T_B), np.array(B)
 
+        T_A, A = np.array(T_A), np.array(A)
+        idx_A = np.argsort(T_A)
+        T_A, A = T_A[idx_A], A[idx_A]
+
+        T_B, B = np.array(T_B), np.array(B)
+        idx_B = np.argsort(T_B)
+        T_B, B = T_B[idx_B], B[idx_B]
+
         Tmin = max(min(T_A), min(T_B))
         Tmax = min(max(T_A), max(T_B))
 
@@ -27,7 +35,7 @@ class PropertyRelation:
             return False
 
         self.has_overlap = True
-        self.T_common = np.linspace(Tmin, Tmax, 200)
+        self.T_common = np.linspace(Tmin, Tmax, 10)
 
         self.spline_A = CubicSpline(T_A, A)
         self.spline_B = CubicSpline(T_B, B)
@@ -44,7 +52,7 @@ class PropertyRelation:
         B_sorted, A_sorted = self.B_vals[idx], self.A_vals[idx]
         B_unique, unique_idx = np.unique(B_sorted, return_index=True)
         A_unique = A_sorted[unique_idx]
-        self.splines_AB["cubic"] = CubicSpline(B_unique, A_unique, extrapolate=False)
+        self.splines_AB["cubic"] = CubicSpline(B_sorted, A_sorted, extrapolate=False)
 
     def fit_linear(self, T_A, A, T_B, B):
         """Строит линейную интерполяцию A(B)."""
@@ -52,10 +60,10 @@ class PropertyRelation:
             return
         idx = np.argsort(self.B_vals)
         B_sorted, A_sorted = self.B_vals[idx], self.A_vals[idx]
-        B_unique, unique_idx = np.unique(B_sorted, return_index=True)
-        A_unique = A_sorted[unique_idx]
+        # B_unique, unique_idx = np.unique(B_sorted, return_index=True)
+        # A_unique = A_sorted[unique_idx]
         self.splines_AB["linear"] = interp1d(
-            B_unique, A_unique, kind="linear",     
+            B_sorted, A_sorted, kind="linear",     
             bounds_error=True,       # запрет выхода за пределы
             fill_value=np.nan        # если всё же выйдет — вернёт NaN
         )
@@ -95,6 +103,8 @@ class PropertyRelation:
         if not self.has_overlap:
             print("Нет пересечения температур — таблица недоступна.")
             return None
-        B_min, B_max = min(self.spline_B.x), max(self.spline_B.x)
+        B_min, B_max = np.min(self.B_vals), np.max(self.B_vals)
         mask = (self.B_vals >= B_min) & (self.B_vals <= B_max)
+
+
         return pd.DataFrame({'B': self.B_vals[mask], 'A': self.A_vals[mask]})

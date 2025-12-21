@@ -3,7 +3,7 @@ import pickle
 import pathlib
 import pandas as pd
 import numpy as np
-from fastapi import FastAPI, Depends, HTTPException, status, Body, Request, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, status, Body, Request, UploadFile, File, Form
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from dotenv import load_dotenv
 from pg_connector import get_all_aloys_json, get_all_fuel_cells_json, get_all_composites_json
@@ -17,6 +17,8 @@ from typing import Dict, Any, List
 from colorref_service import ColorRefService
 from property_relation_service import PropertyRelation
 from pydantic import BaseModel
+from mask_service import MaskService
+
 # Загрузить переменные из .env
 load_dotenv()
 
@@ -272,6 +274,19 @@ class RelationInput(BaseModel):
     B: List[float]
     method: str = "cubic"  # по умолчанию кубический сплайн
 
+@app.post("/evaluate-mask")
+async def evaluate_mask(
+    image_path: str = Form(...),
+    mask_path: str = Form(...)
+):
+    """
+    Принимает пути до исходного изображения и маски (например, из S3),
+    очищает график и возвращает путь до сохранённого результата.
+    """
+    s3 = S3Service()
+    service = MaskService(s3)
+    result_path = await service.clear_graph(image_path, mask_path)
+    return {"clean_path": result_path}
 
 @app.post("/relation")
 def get_relation(data: RelationInput):
