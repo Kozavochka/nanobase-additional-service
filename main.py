@@ -274,6 +274,12 @@ class RelationInput(BaseModel):
     B: List[float]
     method: str = "cubic"  # по умолчанию кубический сплайн
 
+class SplineInterpolationInput(BaseModel):
+    x: List[float]
+    y: List[float]
+    n_points: int = 200
+    method: str = "cubic"  # cubic|linear
+
 @app.post("/evaluate-mask")
 async def evaluate_mask(
     image_path: str = Form(...),
@@ -308,3 +314,17 @@ def get_relation(data: RelationInput):
     # преобразуем таблицу в список словарей
     result = table.to_dict(orient="records")
     return {"relation": result}
+
+@app.post("/spline-interpolate")
+def spline_interpolate(data: SplineInterpolationInput):
+    try:
+        x_new, y_new = PropertyRelation.spline_interpolate(
+            x=data.x,
+            y=data.y,
+            n_points=data.n_points,
+            method=data.method,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"x": x_new, "y": y_new}

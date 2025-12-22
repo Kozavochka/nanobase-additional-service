@@ -108,3 +108,52 @@ class PropertyRelation:
 
 
         return pd.DataFrame({'B': self.B_vals[mask], 'A': self.A_vals[mask]})
+
+    @staticmethod
+    def spline_interpolate(x, y, n_points: int = 200, method: str = "cubic"):
+        """
+        Interpolate y(x) on a denser grid.
+
+        Returns:
+            (x_new, y_new) as python lists.
+        """
+        x_arr = np.asarray(x, dtype=float)
+        y_arr = np.asarray(y, dtype=float)
+
+        if x_arr.ndim != 1 or y_arr.ndim != 1:
+            raise ValueError("x and y must be 1D arrays")
+        if x_arr.size != y_arr.size:
+            raise ValueError("x and y must have the same length")
+        if x_arr.size < 2:
+            raise ValueError("At least 2 points are required")
+        if n_points < 2:
+            raise ValueError("n_points must be >= 2")
+
+        finite_mask = np.isfinite(x_arr) & np.isfinite(y_arr)
+        x_arr = x_arr[finite_mask]
+        y_arr = y_arr[finite_mask]
+        if x_arr.size < 2:
+            raise ValueError("At least 2 finite points are required")
+
+        sort_idx = np.argsort(x_arr)
+        x_sorted = x_arr[sort_idx]
+        y_sorted = y_arr[sort_idx]
+
+        x_unique, unique_idx = np.unique(x_sorted, return_index=True)
+        y_unique = y_sorted[unique_idx]
+        if x_unique.size < 2:
+            raise ValueError("At least 2 unique x values are required")
+
+        x_new = np.linspace(float(x_unique[0]), float(x_unique[-1]), int(n_points))
+
+        method = (method or "cubic").lower()
+        if method == "cubic":
+            spline = CubicSpline(x_unique, y_unique, extrapolate=False)
+            y_new = spline(x_new)
+        elif method == "linear":
+            f = interp1d(x_unique, y_unique, kind="linear", bounds_error=False, fill_value=np.nan)
+            y_new = f(x_new)
+        else:
+            raise ValueError("method must be 'cubic' or 'linear'")
+
+        return x_new.tolist(), np.asarray(y_new, dtype=float).tolist()
