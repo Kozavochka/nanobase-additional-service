@@ -5,7 +5,7 @@
 ## 1. HTTP Gateway Agent
 
 **Файл:** `main.py`  
-**Маршруты:** `/health`, `/predict`, `/alloys`, `/fuel-cells`, `/import-*`, `/process_chart`, `/db-scan-process-chart`, `/colorref-process-chart`, `/evaluate-mask`, `/relation`.
+**Маршруты:** `/health`, `/predict`, `/alloys`, `/fuel-cells`, `/import-*`, `/process_chart`, `/db-scan-process-chart`, `/colorref-process-chart`, `/evaluate-mask`, `/relation`, `/yolo-axis`, `/yolo-ticks`.
 
 - Реализует FastAPI-приложение и базовую HTTP Basic-аутентификацию (пары логин/пароль берутся из `.env`).  
 - Выполняет валидацию входных данных (обязательные поля для инференса, структура JSON-разметки графиков и т.д.).  
@@ -86,14 +86,22 @@
 - `/relation` получает массивы температур и значений, метод (`cubic|linear`) и возвращает табличный результат `[{B, A}, ...]` для визуализации или дальнейших расчетов.  
 - Может печатать формулы сплайнов (методы `print_formula`, `get_table`) — полезно для диагностики.
 
-## 9. Supporting Utilities
+## 9. YOLO Axis/Ticks Agent
+
+**Файл:** `yolo_service.py`
+
+- `YoloAxisService` использует pose‑модель YOLO для извлечения 3 ключевых точек: `origin`, `x_end`, `y_end`.  
+- `YoloTicksService` использует detect‑модель YOLO, OCR (Tesseract) и дедупликацию, чтобы получить значения тиков по X/Y и вычислить `origin`, `x_end`, `y_end` в координатах графика.  
+- `main.py` отдаёт результаты через `/yolo-axis` и `/yolo-ticks`, принимая `image_path` (ключ в S3) и опциональные параметры порогов/классов/модели.
+
+## 10. Supporting Utilities
 
 - `chunked` в `main.py` — помогает делить большие массивы на куски перед отправкой в очередь.  
 - `safe_ticks` — защищает от некорректных шагов сетки при построении подписей.  
 - `default_serializer` — унифицирует сериализацию дат при отправке данных в RabbitMQ.  
 - `.env` + `config.py` — единый источник конфигурации для всех агентов (Postgres, RabbitMQ, AWS/S3, Basic Auth).
 
-## 10. Типовые сценарии
+## 11. Типовые сценарии
 
 1. **Прогноз проводимости:** клиент вызывает `/predict`, проходит Basic Auth → HTTP Gateway валидирует JSON → Inference Agent трансформирует данные и возвращает `log(sigma)`/`sigma`.  
 2. **Импорт справочников:** `/import-alloys` → Gateway читает Postgres → делит пачками → RabbitMQ Publisher уносит данные в очередь → downstream-сервисы подписываются на очереди.  
@@ -101,5 +109,6 @@
 4. **Раскраска по эталонам:** `/colorref-process-chart` → Color Reference Agent сопоставляет точки с заданными цветами → выдаёт изображение с подсветкой и таблицу координат.  
 5. **Очистка графика по маске:** `/evaluate-mask` → Mask Agent стягивает изображение+маску из S3, очищает артефакты → результат кладёт в S3 и отдаёт ссылку.  
 6. **Построение отношения свойств:** `/relation` → Property Relation Agent проводит интерполяцию и возвращает дискретную таблицу A(B).
+7. **Автоматическое распознавание осей/тиков:** `/yolo-axis`/`/yolo-ticks` → YOLO Agent возвращает пиксельные точки осей и числовые значения границ.
 
 Эта карта агентов поможет быстрее разобраться в проекте, распределить ответственность между командами и локализовать нужный модуль при изменениях или отладке.

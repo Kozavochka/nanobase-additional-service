@@ -13,8 +13,9 @@ from datetime import datetime
 from s3_service import S3Service
 from calibration_service import ROI, AxisConfig, PlotCalibrator
 from chart_processor import ChartProcessorService
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from colorref_service import ColorRefService
+from groupingml_service import GroupingMLService
 from property_relation_service import PropertyRelation
 from pydantic import BaseModel
 from mask_service import MaskService
@@ -189,19 +190,71 @@ def safe_ticks(vmin, vmax, step):
     ticks = list(np.arange(vmin, vmax + step, step))
     return ticks
 
+
+def build_calibrator_from_calibration(calibration: Dict[str, Any]) -> PlotCalibrator:
+    required_fields = (
+        "x1_pix",
+        "x2_pix",
+        "y1_pix_axis",
+        "y2_pix_axis",
+        "x1_val",
+        "x2_val",
+        "y1_val",
+        "y2_val",
+    )
+
+    missing = [field for field in required_fields if field not in calibration]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing calibration fields: {', '.join(missing)}",
+        )
+
+    try:
+        x1_pix = float(calibration["x1_pix"])
+        x2_pix = float(calibration["x2_pix"])
+        y1_pix_axis = float(calibration["y1_pix_axis"])
+        y2_pix_axis = float(calibration["y2_pix_axis"])
+        x1_val = float(calibration["x1_val"])
+        x2_val = float(calibration["x2_val"])
+        y1_val = float(calibration["y1_val"])
+        y2_val = float(calibration["y2_val"])
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Calibration fields must be numeric: {exc}",
+        ) from exc
+
+    if x1_val == x2_val:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid calibration: x-axis range is zero (x1_val == x2_val).",
+        )
+    if y1_val == y2_val:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid calibration: y-axis range is zero (y1_val == y2_val).",
+        )
+
+    roi = ROI(
+        x_left=min(x1_pix, x2_pix),
+        x_right=max(x1_pix, x2_pix),
+        y_top=min(y1_pix_axis, y2_pix_axis),
+        y_bottom=max(y1_pix_axis, y2_pix_axis),
+    )
+    xaxis = AxisConfig(vmin=x1_val, vmax=x2_val)
+    yaxis = AxisConfig(vmin=y1_val, vmax=y2_val)
+
+    try:
+        return PlotCalibrator(roi, xaxis, yaxis)
+    except AssertionError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid calibration: {exc}") from exc
+
 # Методы графической детекции
 @app.post("/process_chart")
 def process_chart(markup: dict = Body(...), calibration: dict = Body(...), image_path: str = Body(...)):
-    # 1. Собираем ROI и оси
-    roi = ROI(
-        x_left=min(calibration["x1_pix"], calibration["x2_pix"]),
-        x_right=max(calibration["x1_pix"], calibration["x2_pix"]),
-        y_top=min(calibration["y1_pix_axis"], calibration["y2_pix_axis"]),
-        y_bottom=max(calibration["y1_pix_axis"], calibration["y2_pix_axis"])
-    )
-    xaxis = AxisConfig(vmin=calibration["x1_val"], vmax=calibration["x2_val"])
-    yaxis = AxisConfig(vmin=calibration["y1_val"], vmax=calibration["y2_val"])
-    calibrator = PlotCalibrator(roi, xaxis, yaxis)
+    # 1. Валидируем калибровку и создаем калибратор
+    calibrator = build_calibrator_from_calibration(calibration)
 
     # 2. Инициализируем сервисы
     s3 = S3Service()
@@ -220,16 +273,8 @@ def db_scan_process_chart(
     image_path: str = Body(...),
     eps_setting: float = Body(15.0)  # 8 (близко) или 15 (средне)
 ):
-    # 1) Собираем ROI и оси (как в старом методе)
-    roi = ROI(
-        x_left=min(calibration["x1_pix"], calibration["x2_pix"]),
-        x_right=max(calibration["x1_pix"], calibration["x2_pix"]),
-        y_top=min(calibration["y1_pix_axis"], calibration["y2_pix_axis"]),
-        y_bottom=max(calibration["y1_pix_axis"], calibration["y2_pix_axis"])
-    )
-    xaxis = AxisConfig(vmin=calibration["x1_val"], vmax=calibration["x2_val"])
-    yaxis = AxisConfig(vmin=calibration["y1_val"], vmax=calibration["y2_val"])
-    calibrator = PlotCalibrator(roi, xaxis, yaxis)
+    # 1) Валидируем калибровку и создаем калибратор
+    calibrator = build_calibrator_from_calibration(calibration)
 
     # 2) Инициализируем сервисы
     s3 = S3Service()
@@ -267,6 +312,31 @@ async def colorref_process_chart(
     )
     return result
 
+
+@app.post("/groupingml-process-chart")
+def groupingml_process_chart(
+    clusters: Dict[str, List[List[int]]] = Body(...),
+    calibration: Dict[str, Any] = Body(...),
+    image_path: str = Body(...),
+    cluster_pixel_values: Optional[Dict[str, List[List[int]]]] = Body(None),
+    noise: Optional[List[List[int]]] = Body(None),
+):
+    if not clusters:
+        raise HTTPException(status_code=400, detail="Clusters payload is empty")
+
+    calibrator = build_calibrator_from_calibration(calibration)
+
+    s3 = S3Service()
+    service = GroupingMLService(s3, calibrator)
+    result = service.process(
+        image_path=image_path,
+        clusters=clusters,
+        cluster_pixel_values=cluster_pixel_values,
+        noise=noise,
+    )
+    return result
+
+
 class RelationInput(BaseModel):
     T_A: List[float]
     A: List[float]
@@ -279,6 +349,25 @@ class SplineInterpolationInput(BaseModel):
     y: List[float]
     n_points: int = 200
     method: str = "cubic"  # cubic|linear
+
+class YoloAxisRequest(BaseModel):
+    image_path: str
+    conf: float = 0.25
+    kpt_conf: float = 0.25
+    model_path: Optional[str] = None
+
+class YoloTicksRequest(BaseModel):
+    image_path: str
+    conf: float = 0.25
+    iou: float = 0.6
+    conf_min: float = 0.1
+    class_x: int = 0
+    class_y: int = 1
+    pos_eps: float = 12.0
+    ocr_pad: int = 2
+    ocr_scale: int = 4
+    fix_minus: bool = True
+    model_path: Optional[str] = None
 
 @app.post("/evaluate-mask")
 async def evaluate_mask(

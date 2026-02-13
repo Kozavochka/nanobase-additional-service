@@ -77,7 +77,7 @@ class PlotCalibrator:
         return df.sort_values(by="X_val")
 
 
-def parse_chartreader_json(json_obj, image_key: str, category: str = "1"):
+def parse_chartreader_json(json_obj, image_key: str, category: str = "0"):
     """
     Возвращает список детекций [(score, flag, x_pix, y_pix), ...]
     Для нового формата, где категории — это индексы списка.

@@ -50,7 +50,7 @@ class ColorRefService:
 
         # точки из markup
         image_key = list(markup["result"].keys())[0]
-        detections = parse_chartreader_json(markup, image_key, category="1")
+        detections = parse_chartreader_json(markup, image_key, category="0")
         points = [(int(x), int(y)) for score, flag, x, y in detections if score >= 0.4]
 
         processor = ChartProcessorService(self.s3, calibrator)
