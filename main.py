@@ -315,14 +315,34 @@ async def colorref_process_chart(
 
 @app.post("/groupingml-process-chart")
 def groupingml_process_chart(
-    clusters: Dict[str, List[List[int]]] = Body(...),
     calibration: Dict[str, Any] = Body(...),
     image_path: str = Body(...),
+    clusters: Optional[Dict[str, List[List[int]]]] = Body(None),
+    chartreader_groups: Optional[List[List[float]]] = Body(None),
     cluster_pixel_values: Optional[Dict[str, List[List[int]]]] = Body(None),
     noise: Optional[List[List[int]]] = Body(None),
+    category_idx: int = Body(0),
+    post_merge_enabled: bool = Body(True), #Параметр merge кластеров
+    post_merge_distance_px: float = Body(18.0),
 ):
-    if not clusters:
+    resolved_clusters = clusters or {}
+    resolved_from = "clusters"
+
+    if not resolved_clusters and chartreader_groups:
+        resolved_clusters = GroupingMLService.chartreader_groups_to_clusters(
+            chartreader_groups=chartreader_groups,
+            category_idx=category_idx,
+        )
+        resolved_from = "chartreader_groups"
+
+    if not resolved_clusters:
         raise HTTPException(status_code=400, detail="Clusters payload is empty")
+
+    if post_merge_enabled:
+        resolved_clusters = GroupingMLService.merge_clusters_by_endpoint_distance(
+            clusters=resolved_clusters,
+            post_merge_distance_px=post_merge_distance_px,
+        )
 
     calibrator = build_calibrator_from_calibration(calibration)
 
@@ -330,10 +350,14 @@ def groupingml_process_chart(
     service = GroupingMLService(s3, calibrator)
     result = service.process(
         image_path=image_path,
-        clusters=clusters,
+        clusters=resolved_clusters,
         cluster_pixel_values=cluster_pixel_values,
         noise=noise,
     )
+    result["resolved_from"] = resolved_from
+    result["category_idx"] = category_idx
+    result["post_merge_enabled"] = post_merge_enabled
+    result["post_merge_distance_px"] = post_merge_distance_px
     return result
 
 

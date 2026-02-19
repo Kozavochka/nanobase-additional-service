@@ -16,6 +16,106 @@ class GroupingMLService:
         self.s3 = s3
         self.calibrator = calibrator
 
+    @staticmethod
+    def chartreader_groups_to_clusters(
+        chartreader_groups: List[List[float]],
+        category_idx: int = 0,
+    ) -> Dict[str, List[List[int]]]:
+        clusters: Dict[str, List[List[int]]] = {}
+        cluster_id = 0
+
+        for group in chartreader_groups:
+            if not isinstance(group, list) or len(group) < 6:
+                continue
+
+            try:
+                group_category = int(group[-1])
+            except (TypeError, ValueError):
+                continue
+
+            if group_category != int(category_idx):
+                continue
+
+            # group format: [cx, cy, x1, y1, x2, y2, ..., score, class]
+            keypoint_coords = group[2:-2]
+            if len(keypoint_coords) < 4:
+                continue
+
+            points: List[List[int]] = []
+            for idx in range(0, len(keypoint_coords) - 1, 2):
+                try:
+                    x = int(round(float(keypoint_coords[idx])))
+                    y = int(round(float(keypoint_coords[idx + 1])))
+                except (TypeError, ValueError):
+                    continue
+                points.append([x, y])
+
+            if len(points) < 2:
+                continue
+
+            clusters[str(cluster_id)] = points
+            cluster_id += 1
+
+        return clusters
+
+    @staticmethod
+    def merge_clusters_by_endpoint_distance(
+        clusters: Dict[str, List[List[int]]],
+        post_merge_distance_px: float = 18.0,
+    ) -> Dict[str, List[List[int]]]:
+        prepared: List[List[Tuple[int, int]]] = []
+        for pts in clusters.values():
+            if not pts:
+                continue
+            unique_pts = {(int(p[0]), int(p[1])) for p in pts if isinstance(p, (list, tuple)) and len(p) >= 2}
+            if len(unique_pts) < 2:
+                continue
+            prepared.append(sorted(unique_pts, key=lambda p: (p[0], p[1])))
+
+        if len(prepared) <= 1:
+            return {str(i): [[x, y] for x, y in pts] for i, pts in enumerate(prepared)}
+
+        threshold = float(post_merge_distance_px)
+        merged_any = True
+        max_iters = 300
+        iters = 0
+
+        def _dist(a: Tuple[int, int], b: Tuple[int, int]) -> float:
+            dx = float(a[0] - b[0])
+            dy = float(a[1] - b[1])
+            return float((dx * dx + dy * dy) ** 0.5)
+
+        while merged_any and iters < max_iters:
+            iters += 1
+            merged_any = False
+
+            for i in range(len(prepared)):
+                if merged_any:
+                    break
+                for j in range(i + 1, len(prepared)):
+                    a = prepared[i]
+                    b = prepared[j]
+                    a_left, a_right = a[0], a[-1]
+                    b_left, b_right = b[0], b[-1]
+
+                    # Merge only "right-to-left" endpoints to avoid joining parallel lines.
+                    d_ar_bl = _dist(a_right, b_left)
+                    d_br_al = _dist(b_right, a_left)
+
+                    can_merge_ar_bl = (b_left[0] >= a_right[0]) and (d_ar_bl <= threshold)
+                    can_merge_br_al = (a_left[0] >= b_right[0]) and (d_br_al <= threshold)
+
+                    if not can_merge_ar_bl and not can_merge_br_al:
+                        continue
+
+                    merged_pts = set(a) | set(b)
+                    prepared[i] = sorted(merged_pts, key=lambda p: (p[0], p[1]))
+                    prepared.pop(j)
+                    merged_any = True
+                    break
+
+        return {str(i): [[x, y] for x, y in pts] for i, pts in enumerate(prepared)}
+
     def process(
         self,
         image_path: str,
