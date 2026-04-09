@@ -4,6 +4,7 @@ import pathlib
 import pandas as pd
 import numpy as np
 from fastapi import FastAPI, Depends, HTTPException, status, Body, Request, UploadFile, File, Form
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from dotenv import load_dotenv
 from pg_connector import get_all_aloys_json, get_all_fuel_cells_json, get_all_composites_json
@@ -17,8 +18,19 @@ from typing import Dict, Any, List, Optional
 from colorref_service import ColorRefService
 from groupingml_service import GroupingMLService
 from property_relation_service import PropertyRelation
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from mask_service import MaskService
+from fit_model_service import (
+    DEFAULT_COMPLEXITY_PENALTY_WEIGHT,
+    DEFAULT_DUPLICATE_X_POLICY,
+    DEFAULT_GRID_SIZE,
+    DEFAULT_RETURN_ALL_CANDIDATES,
+    DEFAULT_ROBUST_CLEANING,
+    DEFAULT_SELECTION_METRIC,
+    DEFAULT_TIE_THRESHOLD,
+    FitModelError,
+    fit_model_series,
+)
 
 # Загрузить переменные из .env
 load_dotenv()
@@ -374,6 +386,63 @@ class SplineInterpolationInput(BaseModel):
     n_points: int = 200
     method: str = "cubic"  # cubic|linear
 
+
+class FitPoint(BaseModel):
+    x: Optional[float]
+    y: Optional[float]
+
+
+class FitMetricsResponse(BaseModel):
+    rmse: float
+    mae: float
+    r2: float
+
+
+class FitWarningResponse(BaseModel):
+    code: str
+    message: str
+
+
+class FitCandidateResponse(BaseModel):
+    name: str
+    status: str
+    params: Optional[Dict[str, float | str]] = None
+    metrics: Optional[FitMetricsResponse] = None
+    score: Optional[float] = None
+    complexity_rank: Optional[int] = None
+    fit_points_used: Optional[int] = None
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None
+
+
+class FitCleaningReportResponse(BaseModel):
+    input_points: int
+    removed_invalid_points: int
+    removed_outliers: int
+    duplicate_x_groups: int
+    points_after_cleaning: int
+    unique_x_after_cleaning: int
+
+
+class FitModelRequest(BaseModel):
+    series: List[FitPoint]
+    candidate_models: Optional[List[str]] = None
+    selection_metric: str = DEFAULT_SELECTION_METRIC
+    grid_size: int = DEFAULT_GRID_SIZE
+    robust_cleaning: bool = DEFAULT_ROBUST_CLEANING
+    duplicate_x_policy: str = DEFAULT_DUPLICATE_X_POLICY
+    complexity_penalty_weight: float = DEFAULT_COMPLEXITY_PENALTY_WEIGHT
+    tie_threshold: float = DEFAULT_TIE_THRESHOLD
+    return_all_candidates: bool = DEFAULT_RETURN_ALL_CANDIDATES
+
+
+class FitModelResponse(BaseModel):
+    best_model: FitCandidateResponse
+    candidates: List[FitCandidateResponse]
+    curve_points: List[FitPoint]
+    cleaning_report: FitCleaningReportResponse
+    warnings: List[FitWarningResponse]
+
 class YoloAxisRequest(BaseModel):
     image_path: str
     conf: float = 0.25
@@ -427,6 +496,29 @@ def get_relation(data: RelationInput):
     # преобразуем таблицу в список словарей
     result = table.to_dict(orient="records")
     return {"relation": result}
+
+
+@app.post("/analysis/fit-model", response_model=FitModelResponse)
+def fit_model(payload: dict = Body(...), credentials: HTTPBasicCredentials = Depends(security)):
+    authenticate(credentials)
+
+    try:
+        data = FitModelRequest(**payload)
+    except ValidationError as exc:
+        first_error = exc.errors()[0] if exc.errors() else {}
+        location = ".".join(str(part) for part in first_error.get("loc", []))
+        message = first_error.get("msg", "Invalid request body.")
+        if location:
+            message = f"{location}: {message}"
+        return JSONResponse(
+            status_code=422,
+            content={"error": {"code": "VALIDATION_ERROR", "message": message}},
+        )
+
+    try:
+        return fit_model_series(data.dict())
+    except FitModelError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_response())
 
 @app.post("/spline-interpolate")
 def spline_interpolate(data: SplineInterpolationInput):
