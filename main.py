@@ -31,6 +31,7 @@ from fit_model_service import (
     FitModelError,
     fit_model_series,
 )
+from heatmap_service import HeatmapError, build_heatmap_response
 
 # Загрузить переменные из .env
 load_dotenv()
@@ -443,6 +444,58 @@ class FitModelResponse(BaseModel):
     cleaning_report: FitCleaningReportResponse
     warnings: List[FitWarningResponse]
 
+
+class TriplePointDto(BaseModel):
+    x1: float
+    x2: float
+    z: float
+
+
+class RangeDto(BaseModel):
+    min: float
+    max: float
+
+
+class HeatmapRequest(BaseModel):
+    points: List[TriplePointDto]
+    method: str = "griddata"
+    interpolation: str = "linear"
+    grid_size_x: int = 100
+    grid_size_y: int = 100
+    x1_range: Optional[RangeDto] = None
+    x2_range: Optional[RangeDto] = None
+    show_original_points: bool = True
+    return_debug: bool = False
+
+
+class HeatmapWarningDto(BaseModel):
+    code: str
+    message: str
+    count: Optional[int] = None
+
+
+class HeatmapSummaryDto(BaseModel):
+    point_count_raw: int
+    point_count_cleaned: int
+    x1_min: float
+    x1_max: float
+    x2_min: float
+    x2_max: float
+    z_min: float
+    z_max: float
+    nan_ratio: float
+
+
+class HeatmapResponse(BaseModel):
+    x1_grid: List[float]
+    x2_grid: List[float]
+    z_grid: List[List[float | None]]
+    valid_mask: List[List[bool]]
+    original_points: List[TriplePointDto]
+    summary: HeatmapSummaryDto
+    warnings: List[HeatmapWarningDto]
+    debug: Optional[Dict[str, Any]] = None
+
 class YoloAxisRequest(BaseModel):
     image_path: str
     conf: float = 0.25
@@ -518,6 +571,29 @@ def fit_model(payload: dict = Body(...), credentials: HTTPBasicCredentials = Dep
     try:
         return fit_model_series(data.dict())
     except FitModelError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_response())
+
+
+@app.post("/analysis/heatmap", response_model=HeatmapResponse)
+def heatmap_analysis(payload: dict = Body(...), credentials: HTTPBasicCredentials = Depends(security)):
+    authenticate(credentials)
+
+    try:
+        data = HeatmapRequest(**payload)
+    except ValidationError as exc:
+        first_error = exc.errors()[0] if exc.errors() else {}
+        location = ".".join(str(part) for part in first_error.get("loc", []))
+        message = first_error.get("msg", "Invalid request body.")
+        if location:
+            message = f"{location}: {message}"
+        return JSONResponse(
+            status_code=422,
+            content={"error": {"code": "VALIDATION_ERROR", "message": message}},
+        )
+
+    try:
+        return build_heatmap_response(data.dict())
+    except HeatmapError as exc:
         return JSONResponse(status_code=exc.status_code, content=exc.to_response())
 
 @app.post("/spline-interpolate")
