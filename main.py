@@ -3,6 +3,7 @@ import pickle
 import pathlib
 import pandas as pd
 import numpy as np
+import curve_features_service
 from fastapi import FastAPI, Depends, HTTPException, status, Body, Request, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -14,11 +15,11 @@ from datetime import datetime
 from s3_service import S3Service
 from calibration_service import ROI, AxisConfig, PlotCalibrator
 from chart_processor import ChartProcessorService
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Literal, Optional
 from colorref_service import ColorRefService
 from groupingml_service import GroupingMLService
 from property_relation_service import PropertyRelation
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from mask_service import MaskService
 from fit_model_service import (
     DEFAULT_COMPLEXITY_PENALTY_WEIGHT,
@@ -496,6 +497,75 @@ class HeatmapResponse(BaseModel):
     warnings: List[HeatmapWarningDto]
     debug: Optional[Dict[str, Any]] = None
 
+
+class CurveFeaturesPointDto(BaseModel):
+    x: float
+    y: float
+
+
+class CurveFeaturesRangeDto(BaseModel):
+    min: float
+    max: float
+
+
+class CurveFeaturesRequest(BaseModel):
+    series: List[CurveFeaturesPointDto]
+    base_model: Literal["spline", "poly2", "poly3"] = "spline"
+    grid_size: int = Field(default=300, ge=100, le=1000)
+    smoothing_factor: Optional[float] = None
+    robust_cleaning: bool = False
+    x_range: Optional[CurveFeaturesRangeDto] = None
+    return_debug: bool = False
+
+
+class CurveFeaturesCurvePointDto(BaseModel):
+    x: float
+    y: float
+
+
+class CurveFeaturesExtremumDto(BaseModel):
+    x: float
+    y: float
+    type: Literal["max", "min"]
+    source_index: int
+
+
+class CurveFeaturesInflectionPointDto(BaseModel):
+    x: float
+    y: float
+    source_index: int
+
+
+class CurveFeaturesSegmentDto(BaseModel):
+    from_x: float
+    to_x: float
+    trend: Literal["increasing", "decreasing", "flat"]
+
+
+class CurveFeaturesWarningDto(BaseModel):
+    code: str
+    message: str
+
+
+class CurveFeaturesIntegralDto(BaseModel):
+    value: float
+    x_min: float
+    x_max: float
+
+
+class CurveFeaturesResponse(BaseModel):
+    cleaned_series: List[CurveFeaturesPointDto]
+    base_curve: List[CurveFeaturesCurvePointDto]
+    first_derivative_curve: List[CurveFeaturesCurvePointDto]
+    second_derivative_curve: List[CurveFeaturesCurvePointDto]
+    extrema: List[CurveFeaturesExtremumDto]
+    inflection_points: List[CurveFeaturesInflectionPointDto]
+    monotonic_segments: List[CurveFeaturesSegmentDto]
+    integral: CurveFeaturesIntegralDto
+    warnings: List[CurveFeaturesWarningDto]
+    debug: Optional[Dict[str, Any]] = None
+
+
 class YoloAxisRequest(BaseModel):
     image_path: str
     conf: float = 0.25
@@ -595,6 +665,30 @@ def heatmap_analysis(payload: dict = Body(...), credentials: HTTPBasicCredential
         return build_heatmap_response(data.dict())
     except HeatmapError as exc:
         return JSONResponse(status_code=exc.status_code, content=exc.to_response())
+
+
+@app.post("/analysis/curve-features", response_model=CurveFeaturesResponse)
+def curve_features_analysis(payload: dict = Body(...), credentials: HTTPBasicCredentials = Depends(security)):
+    authenticate(credentials)
+
+    try:
+        data = CurveFeaturesRequest(**payload)
+    except ValidationError as exc:
+        first_error = exc.errors()[0] if exc.errors() else {}
+        location = ".".join(str(part) for part in first_error.get("loc", []))
+        message = first_error.get("msg", "Invalid request body.")
+        if location:
+            message = f"{location}: {message}"
+        return JSONResponse(
+            status_code=422,
+            content={"error": {"code": "VALIDATION_ERROR", "message": message}},
+        )
+
+    try:
+        return curve_features_service.build_curve_features_response(data.dict())
+    except curve_features_service.CurveFeaturesError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_response())
+
 
 @app.post("/spline-interpolate")
 def spline_interpolate(data: SplineInterpolationInput):
