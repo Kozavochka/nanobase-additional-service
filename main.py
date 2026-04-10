@@ -33,6 +33,7 @@ from fit_model_service import (
     fit_model_series,
 )
 from heatmap_service import HeatmapError, build_heatmap_response
+from clustering_service import ClusteringError, build_clustering_response
 
 # Загрузить переменные из .env
 load_dotenv()
@@ -566,6 +567,58 @@ class CurveFeaturesResponse(BaseModel):
     debug: Optional[Dict[str, Any]] = None
 
 
+class SampleFeatureDto(BaseModel):
+    sample_id: int
+    label: str
+    features: Dict[str, float]
+    meta: Optional[Dict[str, Any]] = None
+
+
+class ClusteringRequest(BaseModel):
+    samples: List[SampleFeatureDto]
+    normalize: bool = True
+    embedding_method: Literal["pca", "umap"] = "pca"
+    clustering_method: Literal["kmeans"] = "kmeans"
+    clusters_count: int = Field(default=4, ge=2, le=20)
+    random_state: int = 42
+    return_debug: bool = False
+
+
+class ClusteringWarningDto(BaseModel):
+    code: str
+    message: str
+
+
+class EmbeddedPointDto(BaseModel):
+    sample_id: int
+    label: str
+    x: float
+    y: float
+    cluster: int
+    distance_to_cluster_center: Optional[float] = None
+    meta: Optional[Dict[str, Any]] = None
+
+
+class ClusterSummaryDto(BaseModel):
+    cluster: int
+    size: int
+
+
+class ClusteringSummaryDto(BaseModel):
+    sample_count: int
+    feature_count: int
+    embedding_method: str
+    clustering_method: str
+
+
+class ClusteringResponse(BaseModel):
+    embedding: List[EmbeddedPointDto]
+    clusters: List[ClusterSummaryDto]
+    summary: ClusteringSummaryDto
+    warnings: List[ClusteringWarningDto]
+    debug: Optional[Dict[str, Any]] = None
+
+
 class YoloAxisRequest(BaseModel):
     image_path: str
     conf: float = 0.25
@@ -687,6 +740,29 @@ def curve_features_analysis(payload: dict = Body(...), credentials: HTTPBasicCre
     try:
         return curve_features_service.build_curve_features_response(data.dict())
     except curve_features_service.CurveFeaturesError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_response())
+
+
+@app.post("/analysis/clustering", response_model=ClusteringResponse)
+def clustering_analysis(payload: dict = Body(...), credentials: HTTPBasicCredentials = Depends(security)):
+    authenticate(credentials)
+
+    try:
+        data = ClusteringRequest(**payload)
+    except ValidationError as exc:
+        first_error = exc.errors()[0] if exc.errors() else {}
+        location = ".".join(str(part) for part in first_error.get("loc", []))
+        message = first_error.get("msg", "Invalid request body.")
+        if location:
+            message = f"{location}: {message}"
+        return JSONResponse(
+            status_code=422,
+            content={"error": {"code": "VALIDATION_ERROR", "message": message}},
+        )
+
+    try:
+        return build_clustering_response(data.dict())
+    except ClusteringError as exc:
         return JSONResponse(status_code=exc.status_code, content=exc.to_response())
 
 
