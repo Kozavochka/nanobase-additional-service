@@ -54,7 +54,7 @@ class ChartProcessorService:
 
         # 2. Парсим детекции
         image_key = list(markup["result"].keys())[0]
-        detections = parse_chartreader_json(markup, image_key, category="1")
+        detections = parse_chartreader_json(markup, image_key, category="0")
 
         # 3. Наносим точки на изображение
         draw = ImageDraw.Draw(img)
@@ -103,7 +103,7 @@ class ChartProcessorService:
 
             # 2. Парсим детекции
             image_key = list(markup["result"].keys())[0]
-            detections = parse_chartreader_json(markup, image_key, category="1")
+            detections = parse_chartreader_json(markup, image_key, category="0")
 
             points = [(int(x), int(y)) for score, flag, x, y in detections if score >= min_score]
 
