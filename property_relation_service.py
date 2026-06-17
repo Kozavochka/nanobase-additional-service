@@ -107,7 +107,11 @@ class PropertyRelation:
         mask = (self.B_vals >= B_min) & (self.B_vals <= B_max)
 
 
-        return pd.DataFrame({'B': self.B_vals[mask], 'A': self.A_vals[mask]})
+        return pd.DataFrame({
+            'T': self.T_common[mask],
+            'B': self.B_vals[mask],
+            'A': self.A_vals[mask],
+        })
 
     @staticmethod
     def spline_interpolate(x, y, n_points: int = 200, method: str = "cubic"):
