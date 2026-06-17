@@ -3,12 +3,15 @@ services:
   fastapi-app:
     build:
       context: .
+    command: uvicorn main:app --host 0.0.0.0 --port 5000 --reload
     ports:
       - "5000:5000"
     environment:
       - ENV_FILE=.env
     env_file:
-      - .env  
+      - .env
+    volumes:
+      - ./:/app
     networks:
       - nano
 
